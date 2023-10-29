@@ -4,11 +4,11 @@ CREATE SOURCE CONNECTOR `mysql-connector` WITH(
     "database.hostname"= 'mysql',
     "database.port"= '3306',
     "database.user"= 'root',
-    "database.password"= 'debezium',
+    "database.password"= '1234',
     "database.server.id"= '184054',
     "database.server.name"= 'dbserver1',
     "database.whitelist"= 'inventory',
-    "table.whitelist"= 'inventory.clients,inventory.products,inventory.orders',
+    "table.whitelist"= 'inventory.customers,inventory.products,inventory.orders',
     "database.history.kafka.bootstrap.servers"= 'kafka:9092',
     "database.history.kafka.topic"= 'schema-changes.inventory',
     "transforms"= 'unwrap',
@@ -23,8 +23,10 @@ show topics;
 SET 'auto.offset.reset' = 'earliest';
 
 PRINT "dbserver1.inventory.clients" FROM BEGINNING;
+PRINT "dbserver1.inventory.customers" FROM BEGINNING;
 PRINT "dbserver1.inventory.orders" FROM BEGINNING;
 PRINT "dbserver1.inventory.products" FROM BEGINNING;
+PRINT "dbserver1.inventory.SA_ENRICHED_ORDER" FROM BEGINNING;
 
 CREATE STREAM S_CLIENTS (client_id INT,
                        NAME string,
@@ -67,6 +69,12 @@ CREATE STREAM s_order (
     WITH (KAFKA_TOPIC='dbserver1.inventory.orders',VALUE_FORMAT='json');
 
 
+
+SELECT p.id as PRODUCT_ID, o.price
+
+
+
+
 SELECT
     o.product_id AS product_id,
     p.name AS product_name,
@@ -98,10 +106,10 @@ select o.order_id, o.quantity, p.name as product, SUM(o.quantity) AS total_sales
 
 
 
-select p.product_id AS PRODUCT_ID, p.name AS product, SUM(o.quantity) as quantity 
+select p.id AS PRODUCT_ID, SUM(o.quantity) as quantity 
 from s_order as o 
-LEFT JOIN t_product AS p ON p.product_id = o.product_id
-group by quantity, p.name
+LEFT JOIN t_product AS p ON p.id = o.product_id
+group by p.id
 emit changes;
 
 
@@ -126,12 +134,12 @@ CREATE SINK CONNECTOR `postgres-sink` WITH(
     "connector.class"= 'io.confluent.connect.jdbc.JdbcSinkConnector',
     "tasks.max"= '1',
     "dialect.name"= 'PostgreSqlDatabaseDialect',
-    "table.name.format"= 'en_order',
-    "topics"= 'SA_ENRICHED_ORDER',
-    "connection.url"= 'jdbc:postgresql://postgres:5432/inventory?user=postgresuser&password=postgrespw',
+    "table.name.format"= 'ENRICHED_ORDER',
+    "topics"= 'ENRICHED_ORDER',
+    "connection.url"= 'jdbc:postgresql://postgres:5432/inventory?user=postgresuser&password=1234',
     "auto.create"= 'true',
     "insert.mode"= 'upsert',
-    "pk.fields"= 'ORDER_NUMBER',
+    "pk.fields"= 'PRODUCT_ID',
     "pk.mode"= 'record_key',
     "key.converter"= 'org.apache.kafka.connect.converters.IntegerConverter',
     "key.converter.schemas.enable" = 'false',
@@ -140,6 +148,7 @@ CREATE SINK CONNECTOR `postgres-sink` WITH(
     "value.converter.schema.registry.url"= 'http://schema-registry:8081'
 );
 
+    
 
 
 CREATE TABLE employees (
@@ -171,7 +180,7 @@ UPDATE products SET price = 240.99 WHERE id = 108;
 
 UPDATE products SET price = 340.99 WHERE id = 109;
 
- products | CREATE TABLE `products2` (
+ products | CREATE TABLE `products` (
   `id` int NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
   `description` varchar(512) DEFAULT NULL,
@@ -265,13 +274,116 @@ VALUES (3, '2023-10-24', 1001, 2003, 3, 339.99);
 
 
 SELECT
-    c.client_id,
-    c.name AS client_name,
+    c.id,
+    c.email AS email,
     SUM(p.price) AS total_price
-FROM clients c
-LEFT JOIN orders o ON c.client_id = o.client_id
-LEFT JOIN products p ON o.product_id = p.product_id
-GROUP BY c.client_id, c.name
-ORDER BY total_price DESC;
+FROM s_customer c
+LEFT JOIN t_order o ON c.id = o.purchaser
+LEFT JOIN t_product p ON o.product_id = p.id
+GROUP BY c.id
+EMIT CHANGES;
+
+
+SELECT * from s_customer c 
+LEFT JOIN t_order o on c.id = o.purchaser
+EMIT CHANGES;
+
+
+UPDATE `products`
+SET `price` = 909.99
+WHERE `id` = 105;
+
+
+
+CREATE STREAM SA_ENRICHED_ORDER WITH (VALUE_FORMAT='AVRO') AS
+
+Select o.product_id as PRODUCT_ID, o.quantity as QUANTITY
+FROM s_order o
+GROUP BY o.product_id
+EMIT CHANGES;
+
+
+
+CREATE STREAM ENRICHED_ORDER WITH (VALUE_FORMAT='AVRO') AS
+Select o.product_id as PRODUCT_ID, o.quantity as QUANTITY, p.price as PRICE
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+EMIT CHANGES;
+
+
+CREATE STREAM ENRICHED_SALES WITH (VALUE_FORMAT='AVRO') AS
+SELECT o.product_id as PRODUCT_ID, o.order_date AS DATE, o.purchaser AS CLIENT, o.quantity AS QUANTITY, p.name AS PRODUCT_NAME, p.price AS PRICE 
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+EMIT CHANGES;
+
+CREATE STREAM E_SALES WITH (VALUE_FORMAT='AVRO') AS
+SELECT o.product_id as PRODUCT_ID, o.order_date AS DATE, o.purchaser AS CLIENT, o.quantity AS QUANTITY, p.name AS PRODUCT_NAME, p.price AS PRICE 
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+EMIT CHANGES;
+
+CREATE STREAM C_SALES WITH (VALUE_FORMAT='AVRO') AS
+SELECT o.order_number,o.product_id as PRODUCT_ID, o.order_date AS DATE, o.purchaser AS CLIENT, o.quantity AS QUANTITY, p.name AS PRODUCT_NAME, p.price AS PRICE 
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+partition by o.order_number
+EMIT CHANGES;
+
+
+
+SELECT o.order_number,o.product_id as PRODUCT_ID, o.order_date AS DATE, o.purchaser AS CLIENT, o.quantity AS QUANTITY, p.name AS PRODUCT_NAME, p.price AS PRICE 
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+EMIT CHANGES;
+
+
+SELECT *
+FROM s_customer c
+LEFT JOIN t_order o ON c.id = o.purchaser
+EMIT CHANGES;
+
+
+CREATE SINK CONNECTOR `postgres-sink` WITH(
+    "connector.class"= 'io.confluent.connect.jdbc.JdbcSinkConnector',
+    "tasks.max"= '1',
+    "dialect.name"= 'PostgreSqlDatabaseDialect',
+    "table.name.format"= 'c_sales',
+    "topics"= 'C_SALES',
+    "connection.url"= 'jdbc:postgresql://postgres:5432/inventory?user=postgresuser&password=1234',
+    "auto.create"= 'true',
+    "insert.mode"= 'upsert',
+    "pk.fields"= 'ORDER_NUMBER',
+    "pk.mode"= 'record_key',
+    "key.converter"= 'org.apache.kafka.connect.converters.IntegerConverter',
+    "key.converter.schemas.enable" = 'false',
+    "value.converter"= 'io.confluent.connect.avro.AvroConverter',
+    "value.converter.schemas.enable" = 'true',
+    "value.converter.schema.registry.url"= 'http://schema-registry:8081'
+);
+
+
+
+SELECT "PRODUCT_ID", SUM("QUANTITY" * "PRICE")  FROM c_sales GROUP BY "PRODUCT_ID";
+SELECT "PRODUCT_ID", SUM("QUANTITY" * "PRICE")  FROM c_sales GROUP BY "PRODUCT_ID" ORDER BY sum DESC;
+
+
+
+
+
+
+
+
+
+
+
+
+////
+
+
+SELECT o.product_id as PRODUCT_ID, o.order_date AS DATE, o.purchaser AS CLIENT, o.quantity AS QUANTITY, p.name AS PRODUCT_NAME, p.price AS PRICE 
+FROM s_order o
+LEFT JOIN t_product p ON o.product_id = p.id
+EMIT CHANGES;
 
 
