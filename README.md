@@ -3,7 +3,7 @@
 
 ## Architechture
 
-![alt text]((https://github.com/JATTYz/ETL-Pipeline-with-Kafka/blob/main/ETL_Architechture.png))
+![alt text]((https://github.com/JATTYz/ETL-Pipeline-with-Kafka/blob/main/ETL_Architecture.png))
 
 ## Build containers 
 docker-compose -f docker-compose.yml up --build --no-start
