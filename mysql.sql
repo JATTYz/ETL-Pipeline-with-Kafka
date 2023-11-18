@@ -1,4 +1,6 @@
 
+--- MYSQL DATABASE ---
+
 DROP TABLE products_on_hand;
 DROP TABLE orders;
 DROP TABLE products;
@@ -82,7 +84,10 @@ VALUES ('2023-10-28', 1005, 100, 103, 108900);
 INSERT INTO `orders` (`order_date`, `purchaser`, `quantity`, `product_id`, `total_price`)
 VALUES ('2023-10-28', 1005, 5, 101, 44395);
 
+--- END OF MYSQL DATABASE ---
 
+
+--- KSQL DATABASE ---
 
 CREATE SOURCE CONNECTOR `mysql-connector` WITH(
     "connector.class"= 'io.debezium.connector.mysql.MySqlConnector',
@@ -306,4 +311,11 @@ CREATE SINK CONNECTOR `postgres-sink3` WITH(
 );
 
 SELECT "ID", "FIRST_NAME", "LAST_NAME", "TOTAL_SPENT" FROM enriched_customer_spent ORDER BY "TOTAL_SPENT" DESC;
+
+--- KSQL DATABASE ---
+
+
+--- VALIDATE ENRICHED TABLES IN POSTGRES DB ---
+
+
 
