@@ -4,6 +4,14 @@ DROP TABLE orders;
 DROP TABLE products;
 DROP TABLE geom;
 
+CREATE TABLE `customers` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `first_name` varchar(255) NOT NULL,
+  `last_name` varchar(255) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `email` (`email`)
+)
 
 CREATE TABLE `products` (
   `id` int NOT NULL AUTO_INCREMENT,
@@ -47,22 +55,6 @@ CREATE TABLE `orders` (
   `product_id` int NOT NULL,
   `total_price` int NOT NULL,
   PRIMARY KEY (`order_number`),
-  KEY `order_customer` (`purchaser`),
-  KEY `ordered_product` (`product_id`),
-  CONSTRAINT `orders_ibfk_1` FOREIGN KEY (`purchaser`) REFERENCES `customers` (`id`),
-  CONSTRAINT `orders_ibfk_2` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`)
-);
-
-CREATE TABLE `orders` (
-  `order_number` int NOT NULL AUTO_INCREMENT,
-  `order_date` date NOT NULL,
-  `purchaser` int NOT NULL,
-  `quantity` int NOT NULL,
-  `product_id` int NOT NULL,
-  `total_price` int NOT NULL,
-  PRIMARY KEY (`order_number`),
-  KEY `order_customer` (`purchaser`),
-  KEY `ordered_product` (`product_id`),
   FOREIGN KEY (`purchaser`) REFERENCES `customers` (`id`),
   FOREIGN KEY (`product_id`) REFERENCES `products` (`id`)
 );
@@ -86,6 +78,9 @@ VALUES ('2023-10-28', 1001, 2, 104, 10998);
 
 INSERT INTO `orders` (`order_date`, `purchaser`, `quantity`, `product_id`, `total_price`)
 VALUES ('2023-10-28', 1005, 100, 103, 108900);
+
+INSERT INTO `orders` (`order_date`, `purchaser`, `quantity`, `product_id`, `total_price`)
+VALUES ('2023-10-28', 1005, 5, 101, 44395);
 
 
 
@@ -178,6 +173,8 @@ AS
 
 
 
+
+
 CREATE TABLE T_PRODUCT_SALES AS
 SELECT  p.id, SUM(o.quantity) as quantity, SUM(o.total_price) as total_sales
 FROM s_order as o 
@@ -223,14 +220,17 @@ CREATE SINK CONNECTOR `postgres-sink` WITH(
     "value.converter.schema.registry.url"= 'http://schema-registry:8081'
 );
 
+SELECT "PRODUCT_ID","NAME", "QUANTITY", "TOTAL_SALES" FROM enriched_sales ORDER BY "TOTAL_SALES" DESC;
+
 
 CREATE STREAM S_ENRICHED_ORDER WITH (VALUE_FORMAT='AVRO') AS
 select o.order_number AS ORDER_NUMBER, p.id as PRODUCT_ID, 
 p.name as PRODUCT_NAME, 
-o.quantity AS Quantity, 
-c.id as customer_id, 
-c.email as customer_email,
-o.total_price AS total_price
+o.quantity AS QUANTITY,
+o.order_date AS ORDER_DATE, 
+c.id as CUSTOMER_ID, 
+c.email as CUSTOMER_EMAIL,
+o.total_price AS TOTAL_PRICE
      from s_order as o 
 left join t_product as p on o.product_id = p.id
 left join t_customer as c on o.purchaser = c.id
@@ -256,10 +256,54 @@ CREATE SINK CONNECTOR `postgres-sink2` WITH(
     "value.converter.schema.registry.url"= 'http://schema-registry:8081'
 );
 
-
-SELECT "PRODUCT_ID","NAME", "QUANTITY", "TOTAL_SALES" FROM enriched_sales ORDER BY "TOTAL_SALES" DESC;
-
-\d+ enriched_orders;
+SELECT "ORDER_NUMBER", "PRODUCT_ID", "PRODUCT_NAME", "QUANTITY", 
+"ORDER_DATE", "CUSTOMER_ID", "CUSTOMER_EMAIL", "TOTAL_PRICE" from enriched_orders;
 
 
-curl -X "POST" "http://primary-ksqldb-server:8088" -H "Accept: application/vnd.ksql.v1+json" -d $'{"ksql": "LIST STREAMS;","streamsProperties": {}}'
+CREATE TABLE T_CUSTOMER_SPENT AS
+SELECT c.id, SUM(o.total_price) AS total_spent
+FROM s_order as o
+LEFT JOIN t_customer as c ON c.id = o.purchaser
+GROUP BY c.id
+emit changes;
+
+CREATE TABLE T_ENRICHED_CUSTOMER_SPENT AS
+SELECT c.id AS ID, c.first_name, c.last_name ,s.total_spent from T_CUSTOMER_SPENT as s
+LEFT JOIN t_customer as c ON s.id = c.id
+emit changes;
+
+CREATE STREAM S_CUSTOMER_SPENT (
+    id INT KEY,
+    first_name string,
+    last_name string,
+    total_spent int
+) with (
+    KAFKA_TOPIC ='T_ENRICHED_CUSTOMER_SPENT',
+    VALUE_FORMAT='JSON'
+);
+
+CREATE STREAM S_ENRICHED_CUSTOMER_SPENT WITH (VALUE_FORMAT='AVRO') AS
+SELECT * from S_CUSTOMER_SPENT
+partition by ID
+emit changes;
+
+CREATE SINK CONNECTOR `postgres-sink3` WITH(
+    "connector.class"= 'io.confluent.connect.jdbc.JdbcSinkConnector',
+    "tasks.max"= '1',
+    "dialect.name"= 'PostgreSqlDatabaseDialect',
+    "table.name.format"= 'enriched_customer_spent',
+    "topics"= 'S_ENRICHED_CUSTOMER_SPENT',
+    "connection.url"= 'jdbc:postgresql://postgres:5432/inventory?user=postgresuser&password=1234',
+    "auto.create"= 'true',
+    "insert.mode"= 'upsert',
+    "pk.fields"= 'ID',
+    "pk.mode"= 'record_key',
+    "key.converter"= 'org.apache.kafka.connect.converters.IntegerConverter',
+    "key.converter.schemas.enable" = 'false',
+    "value.converter"= 'io.confluent.connect.avro.AvroConverter',
+    "value.converter.schemas.enable" = 'true',
+    "value.converter.schema.registry.url"= 'http://schema-registry:8081'
+);
+
+SELECT "ID", "FIRST_NAME", "LAST_NAME", "TOTAL_SPENT" FROM enriched_customer_spent ORDER BY "TOTAL_SPENT" DESC;
+
